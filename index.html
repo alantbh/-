@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover, maximum-scale=1.0">
-  <title>🍉 切水果 · 清晰双刀版</title>
+  <title>🍉 切水果 · 清晰实体版</title>
   <style>
     * { margin:0; padding:0; box-sizing:border-box; }
     body {
@@ -71,6 +71,11 @@
       font-size: max(3.5vw, 1.3rem); font-weight:bold; padding: 1.8vh 6vw; border-radius: 40px;
       box-shadow:0 6px 0 #b8731b; margin-top: 2vh;">
       🛒 道具商店
+    </button>
+    <button id="dailyBtn" style="background: #9b59b6; border:none; color:white;
+      font-size: max(3vw, 1.1rem); font-weight:bold; padding: 1.5vh 5vw; border-radius: 30px;
+      box-shadow:0 5px 0 #6c3483; margin-top: 2vh;">
+      🎁 每日签到 (+100💰)
     </button>
     <div style="color:#ccc; margin-top: 3vh; font-size: max(2.5vw, 0.9rem);">🕹️ 双手按住屏幕 → 两把刀跟随手指</div>
   </div>
@@ -154,7 +159,7 @@
         if(!musicAllowed) { musicAllowed=true; playMenuMusic(); }
       }, {once:true});
 
-      // ---------- DOM 元素 ----------
+      // ---------- DOM ----------
       const menuScreen = document.getElementById('menuScreen');
       const shopScreen = document.getElementById('shopScreen');
       const gameoverScreen = document.getElementById('gameoverScreen');
@@ -185,13 +190,20 @@
       let lastTimestamp = 0;
       let fruitSpawnTimer = 0;
 
+      // 特殊效果计时
       let slowMotionUntil = 0;
       let doubleScoreUntil = 0;
+      let freezeUntil = 0;       // 冰冻截止
+      let magnetUntil = 0;       // 磁铁截止
+
+      // 上次同种水果切割（用于组合技）
+      let lastFruitType = null;
+      let sameTypeStreak = 0;
 
       const modeSettings = {
-        classic: { duration: 60, spawnInterval: 0.9, bombChance: 0.12, specialChance: 0.08, speedMult: 0.8 },
-        arcade:  { duration: 45, spawnInterval: 0.6, bombChance: 0.10, specialChance: 0.14, speedMult: 0.95 },
-        relax:   { duration: 90, spawnInterval: 1.3, bombChance: 0.03, specialChance: 0.06, speedMult: 0.65 }
+        classic: { duration: 60, spawnInterval: 0.9, bombChance: 0.12, specialChance: 0.10, speedMult: 0.8 },
+        arcade:  { duration: 45, spawnInterval: 0.6, bombChance: 0.10, specialChance: 0.16, speedMult: 0.95 },
+        relax:   { duration: 90, spawnInterval: 1.3, bombChance: 0.03, specialChance: 0.08, speedMult: 0.65 }
       };
 
       // 持久化数据
@@ -199,9 +211,10 @@
       let sharpLevel = parseInt(localStorage.getItem('sharpLevel') || '1');
       let knifeLevel = parseInt(localStorage.getItem('knifeLevel') || '1');
       let coinBoostLevel = parseInt(localStorage.getItem('coinBoostLevel') || '1');
+      let lastDailyDate = localStorage.getItem('lastDailyDate') || '';
 
       function sharpRadiusMultiplier() { return 1 + (sharpLevel - 1) * 0.15; }
-      function knifeSizePx() { return 60 + (knifeLevel - 1) * 10; }
+      function knifeSizePx() { return 70 + (knifeLevel - 1) * 12; } // 基础70px，清晰可见
       function coinMultiplier() { return 1 + (coinBoostLevel - 1) * 0.5; }
       function sharpUpgradeCost() { return sharpLevel * 100; }
       function knifeUpgradeCost() { return knifeLevel * 150; }
@@ -211,17 +224,39 @@
         localStorage.setItem('sharpLevel', sharpLevel);
         localStorage.setItem('knifeLevel', knifeLevel);
         localStorage.setItem('coinBoostLevel', coinBoostLevel);
+        localStorage.setItem('lastDailyDate', lastDailyDate);
+      }
+
+      // 每日签到
+      function checkDaily() {
+        const today = new Date().toDateString();
+        if (lastDailyDate !== today) {
+          lastDailyDate = today;
+          totalGold += 100;
+          saveData();
+          updateGoldUI();
+          alert('🎉 每日签到成功！获得 100 金币！');
+        } else {
+          alert('今日已签到，明天再来吧~');
+        }
       }
 
       const fruitTypes = [
-        { emoji: '🍎', score: 1 }, { emoji: '🍌', score: 2 }, { emoji: '🍊', score: 3 },
-        { emoji: '🍈', score: 5 }, { emoji: '🍉', score: 1 }, { emoji: '🍇', score: 1 }, { emoji: '🍓', score: 1 }
+        { emoji: '🍎', score: 1, name: 'apple' },
+        { emoji: '🍌', score: 2, name: 'banana' },
+        { emoji: '🍊', score: 3, name: 'orange' },
+        { emoji: '🍈', score: 5, name: 'durian' },
+        { emoji: '🍉', score: 1, name: 'watermelon' },
+        { emoji: '🍇', score: 1, name: 'grape' },
+        { emoji: '🍓', score: 1, name: 'strawberry' }
       ];
       const bombEmoji = '💣';
       const doubleEmoji = '💎';
       const starEmoji = '⭐';
       const slowEmoji = '🐢';
       const tornadoEmoji = '🌀';
+      const freezeEmoji = '❄️';  // 新道具：冰冻
+      const magnetEmoji = '🧲';  // 新道具：磁铁
 
       // ---------- UI 更新 ----------
       function updateGoldUI() {
@@ -290,6 +325,10 @@
         fruitSpawnTimer = 0;
         slowMotionUntil = 0;
         doubleScoreUntil = 0;
+        freezeUntil = 0;
+        magnetUntil = 0;
+        lastFruitType = null;
+        sameTypeStreak = 0;
       }
 
       function spawnObject() {
@@ -301,25 +340,29 @@
         }
         let specialRand = Math.random();
         if (specialRand < set.specialChance) {
-          let r2 = Math.random();
-          if (r2 < 0.25) spawnItem(slowEmoji, 'slow', 0);
-          else if (r2 < 0.5) spawnItem(tornadoEmoji, 'tornado', 0);
-          else if (r2 < 0.75) spawnItem(doubleEmoji, 'double', 0);
-          else spawnItem(starEmoji, 'star', 0);
+          // 随机分配7种特殊道具
+          const items = ['slow', 'tornado', 'double', 'star', 'freeze', 'magnet', 'double']; // double概率稍高
+          const chosen = items[Math.floor(Math.random() * items.length)];
+          if (chosen === 'slow') spawnItem(slowEmoji, 'slow', 0);
+          else if (chosen === 'tornado') spawnItem(tornadoEmoji, 'tornado', 0);
+          else if (chosen === 'double') spawnItem(doubleEmoji, 'double', 0);
+          else if (chosen === 'star') spawnItem(starEmoji, 'star', 0);
+          else if (chosen === 'freeze') spawnItem(freezeEmoji, 'freeze', 0);
+          else if (chosen === 'magnet') spawnItem(magnetEmoji, 'magnet', 0);
           return;
         }
         let fruit = fruitTypes[Math.floor(Math.random() * fruitTypes.length)];
-        spawnFruit(fruit.emoji, fruit.score);
+        spawnFruit(fruit.emoji, fruit.score, fruit.name);
       }
 
-      function spawnFruit(emoji, scoreVal) {
+      function spawnFruit(emoji, scoreVal, name) {
         let x = 50 + Math.random() * (W - 100);
         let y = H + 30;
         let vx = (Math.random() - 0.5) * 220;
         let vy = -800 - Math.random() * 400;
         let size = 55 + Math.floor(Math.random() * 45);
         fruits.push({
-          type: 'fruit', emoji, scoreVal, x, y, vx, vy, size,
+          type: 'fruit', emoji, scoreVal, name, x, y, vx, vy, size,
           rotation: Math.random()*Math.PI*2, rotSpeed: (Math.random()-0.5)*6,
           sliced: false, isBomb: false
         });
@@ -334,7 +377,7 @@
         fruits.push({
           type: itemType, emoji, scoreVal, x, y, vx, vy, size,
           rotation: 0, rotSpeed: (Math.random()-0.5)*3,
-          sliced: false, isBomb: (itemType === 'bomb')
+          sliced: false, isBomb: false, name: itemType
         });
       }
 
@@ -363,10 +406,13 @@
             let spd = 200+Math.random()*300;
             particles.push({x:fruit.x, y:fruit.y, vx:Math.cos(ang)*spd, vy:Math.sin(ang)*spd-100, life:0.6, maxLife:0.6, color:'#ff4444', size:5+Math.random()*6});
           }
+          lastFruitType = null;
+          sameTypeStreak = 0;
           return;
         }
 
         let now = performance.now();
+        // 连击检测
         if (now - lastSliceTime < 1500) {
           combo++;
         } else {
@@ -374,17 +420,46 @@
         }
         lastSliceTime = now;
 
+        // 同种水果组合技检测
+        if (fruit.type === 'fruit') {
+          if (lastFruitType === fruit.name && now - lastSliceTime < 2000) {
+            sameTypeStreak++;
+            if (sameTypeStreak >= 3) {
+              // 触发组合技：额外加分并召唤旋风效果
+              score += 20;
+              // 清除屏幕所有非炸弹水果（模拟旋风）
+              for (let f of fruits) {
+                if (f !== fruit && !f.sliced && f.type !== 'bomb') {
+                  processSlice(f);
+                }
+              }
+              sameTypeStreak = 0;
+            }
+          } else {
+            sameTypeStreak = 1;
+          }
+          lastFruitType = fruit.name;
+        } else {
+          lastFruitType = null;
+          sameTypeStreak = 0;
+        }
+
         let base = fruit.scoreVal || 0;
         if (now < doubleScoreUntil) base *= 2;
         let comboBonus = combo * 2;
         score += base + comboBonus;
 
+        // 特殊道具效果
         if (fruit.type === 'star') {
           score += 10;
         } else if (fruit.type === 'double') {
           doubleScoreUntil = now + 10000;
         } else if (fruit.type === 'slow') {
           slowMotionUntil = now + 8000;
+        } else if (fruit.type === 'freeze') {
+          freezeUntil = now + 5000;   // 冰冻5秒
+        } else if (fruit.type === 'magnet') {
+          magnetUntil = now + 6000;   // 磁铁6秒
         } else if (fruit.type === 'tornado') {
           for (let f of fruits) {
             if (f === fruit) continue;
@@ -394,6 +469,7 @@
           }
         }
 
+        // 粒子
         for (let i=0;i<6;i++) {
           let ang = Math.random()*Math.PI*2;
           let spd = 100+Math.random()*200;
@@ -431,6 +507,12 @@
             }
           }
         }
+        // 记录拖尾点
+        if (touchPoints.length > 0) {
+          window._sliceTrail = window._sliceTrail || [];
+          window._sliceTrail.push({ x: touchPoints[0].x, y: touchPoints[0].y, time: performance.now(), color: '#ffaa00' });
+          if (window._sliceTrail.length > 30) window._sliceTrail.shift();
+        }
         window._lastTouchPos = touchPoints.map(p=>({x:p.x,y:p.y}));
       }, {passive: false});
 
@@ -439,11 +521,13 @@
         if (gameState !== 'playing') return;
         updateTouches(e);
         window._lastTouchPos = touchPoints.map(p=>({x:p.x,y:p.y}));
+        window._sliceTrail = [];
       });
 
       canvas.addEventListener('touchcancel', () => {
         touchPoints = [];
         window._lastTouchPos = [];
+        window._sliceTrail = [];
       });
 
       function gameLoop(now) {
@@ -467,16 +551,42 @@
         let gravity = 980;
         if (now < slowMotionUntil) gravity *= 0.4;
         let speedMult = set.speedMult;
+        const frozen = now < freezeUntil;
+        const magnetActive = now < magnetUntil;
 
         for (let i=fruits.length-1;i>=0;i--) {
           let f = fruits[i];
+          if (frozen) {
+            // 冰冻：停止移动，但仍旋转
+            f.rotation += f.rotSpeed * dt;
+            continue;
+          }
           f.vy += gravity * dt;
           f.x += f.vx * speedMult * dt;
           f.y += f.vy * speedMult * dt;
           f.rotation += f.rotSpeed * dt;
+
+          // 磁铁效果：吸引向最近的触摸点或中心
+          if (magnetActive && !f.sliced && f.type !== 'bomb') {
+            let targetX = W/2, targetY = H/2;
+            if (touchPoints.length > 0) {
+              targetX = touchPoints[0].x;
+              targetY = touchPoints[0].y;
+            }
+            let dx = targetX - f.x;
+            let dy = targetY - f.y;
+            let dist = Math.sqrt(dx*dx+dy*dy);
+            if (dist > 1) {
+              let pullStrength = 300; // 吸引力
+              f.vx += (dx/dist) * pullStrength * dt;
+              f.vy += (dy/dist) * pullStrength * dt;
+            }
+          }
+
           if (f.y - f.size > H + 130 || (f.sliced && f.y > H+250)) fruits.splice(i,1);
         }
 
+        // 更新粒子 & 拖尾
         for (let i=particles.length-1;i>=0;i--) {
           let p = particles[i];
           p.life -= dt;
@@ -485,12 +595,16 @@
           p.y += p.vy*dt;
           p.vy += 400*dt;
         }
+        if (window._sliceTrail) {
+          window._sliceTrail = window._sliceTrail.filter(p => now - p.time < 0.3);
+        }
 
         if (now - lastSliceTime > 1500) combo = 0;
 
         drawBackground();
         drawFruits();
         drawParticles();
+        drawSliceTrail();
         drawKnives();
         drawHUD();
       }
@@ -508,14 +622,16 @@
           ctx.save(); ctx.translate(f.x,f.y); ctx.rotate(f.rotation);
           ctx.font = `${f.size}px "Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",system-ui`;
           ctx.textAlign='center'; ctx.textBaseline='middle';
+          // 水果阴影，使其更立体清晰
+          ctx.shadowColor = 'rgba(0,0,0,0.8)';
+          ctx.shadowBlur = 4;
           ctx.fillText(f.emoji, 0, 0);
-          // 极淡高光，不影响清晰度
-          ctx.fillStyle = 'rgba(255,255,255,0.15)';
-          ctx.font = `${f.size*0.9}px "Segoe UI Emoji","Apple Color Emoji"`;
-          ctx.fillText(f.emoji, -1, -1);
-          // 恢复填充颜色，不影响裂纹绘制
-          ctx.fillStyle = '#fff';
+          // 去掉高光，直接再绘制一层加深颜色（恢复阴影）
+          ctx.shadowColor = 'transparent';
+          ctx.fillText(f.emoji, 0, 0);
+          // 切割裂纹
           if (f.sliced) {
+            ctx.shadowBlur = 0;
             ctx.strokeStyle='#fff';
             ctx.lineWidth=2;
             ctx.beginPath();
@@ -538,6 +654,23 @@
         }
       }
 
+      function drawSliceTrail() {
+        if (!window._sliceTrail || window._sliceTrail.length < 2) return;
+        ctx.save();
+        ctx.lineWidth = 4;
+        ctx.lineCap = 'round';
+        ctx.strokeStyle = '#ffaa00';
+        ctx.shadowColor = '#ff6600';
+        ctx.shadowBlur = 10;
+        ctx.beginPath();
+        ctx.moveTo(window._sliceTrail[0].x, window._sliceTrail[0].y);
+        for (let i=1; i<window._sliceTrail.length; i++) {
+          ctx.lineTo(window._sliceTrail[i].x, window._sliceTrail[i].y);
+        }
+        ctx.stroke();
+        ctx.restore();
+      }
+
       function drawKnives() {
         if (touchPoints.length===0) return;
         let knifeSize = knifeSizePx();
@@ -552,17 +685,19 @@
           ctx.save(); ctx.translate(pt.x,pt.y); ctx.rotate(angle);
           ctx.font = `${knifeSize}px "Segoe UI Emoji","Apple Color Emoji"`;
           ctx.textAlign='center'; ctx.textBaseline='middle';
-          ctx.shadowColor = 'rgba(255,255,255,0.7)';
-          ctx.shadowBlur = 6;
+          // 刀身实体化：添加黑色描边和微弱阴影
+          ctx.shadowColor = 'rgba(0,0,0,0.9)';
+          ctx.shadowBlur = 3;
+          ctx.fillText('🔪', 0, 0);
+          ctx.shadowColor = 'transparent';
           ctx.fillText('🔪', 0, 0);
           ctx.restore();
         }
       }
 
       function drawHUD() {
-        // 根据屏幕宽度动态计算字体大小（手机约14-18px，平板更大）
-        const hudFontSize = Math.max(W * 0.035, 16);
-        const smallFontSize = Math.max(W * 0.028, 12);
+        const hudFontSize = Math.max(W * 0.04, 18);
+        const smallFontSize = Math.max(W * 0.03, 14);
         ctx.save();
         ctx.font = `bold ${hudFontSize}px "PingFang SC", "Microsoft YaHei", sans-serif`;
         ctx.fillStyle='#fff'; ctx.shadowColor='#000'; ctx.shadowBlur=6;
@@ -578,7 +713,9 @@
         ctx.textAlign='left';
         let yOff = 70;
         if (now < slowMotionUntil) { ctx.fillText('🐢减速', 15, yOff); yOff += 25; }
-        if (now < doubleScoreUntil) { ctx.fillText('💎双倍', 15, yOff); }
+        if (now < doubleScoreUntil) { ctx.fillText('💎双倍', 15, yOff); yOff += 25; }
+        if (now < freezeUntil) { ctx.fillText('❄️冰冻', 15, yOff); yOff += 25; }
+        if (now < magnetUntil) { ctx.fillText('🧲磁铁', 15, yOff); }
         ctx.restore();
       }
 
@@ -588,6 +725,7 @@
       document.getElementById('backMenuBtn').addEventListener('click', showMenu);
       document.getElementById('replayBtn').addEventListener('click', startGame);
       document.getElementById('toShopBtn').addEventListener('click', showShop);
+      document.getElementById('dailyBtn').addEventListener('click', checkDaily);
 
       document.getElementById('upSharpBtn').addEventListener('click', ()=>{
         let cost=sharpUpgradeCost();
@@ -619,8 +757,7 @@
       showMenu();
       updateGoldUI();
       updateShopUI();
-
-      window.addEventListener('blur', ()=>{ touchPoints=[]; window._lastTouchPos=[]; });
+      window.addEventListener('blur', ()=>{ touchPoints=[]; window._lastTouchPos=[]; window._sliceTrail=[]; });
     })();
   </script>
 </body>
